@@ -45,6 +45,11 @@ defmodule NxEigen.Backend do
   end
 
   @impl true
+  def block(block, _output, args, default_impl) do
+    apply(default_impl, [block | args])
+  end
+
+  @impl true
   def from_binary(tensor, binary, _backend_opts) do
     state = NxEigen.NIF.from_binary(binary, tensor.type, tensor.shape)
     %{tensor | data: %__MODULE__{state: state}}
