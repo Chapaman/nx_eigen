@@ -3,7 +3,7 @@ Code.require_file("precompiler.exs", __DIR__)
 defmodule NxEigen.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/polvalente/nx_eigen"
   @cc_template "<%= cc %>"
   @cxx_template "<%= cxx %>"
@@ -113,7 +113,7 @@ defmodule NxEigen.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:nx, "~> 0.10"},
+      {:nx, "~> 1.0"},
       {:elixir_make, "~> 0.8", runtime: false},
       {:cc_precompiler, "~> 0.1", runtime: false},
       {:fine, "~> 0.1.0"},
