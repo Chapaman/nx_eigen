@@ -30,6 +30,36 @@ defmodule NxEigenTest do
     assert t.data.__struct__ == NxEigen.Backend
   end
 
+  test "logical_not uses the default block implementation" do
+    tensor = NxEigen.tensor([1.0, 0.0, 2.0], type: :f32)
+    expected = Nx.tensor([1.0, 0.0, 2.0], type: :f32) |> Nx.logical_not()
+
+    assert Nx.to_binary(Nx.logical_not(tensor)) == Nx.to_binary(expected)
+  end
+
+  test "broadcast, reshape, and transpose match the binary backend" do
+    tensor = NxEigen.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], type: :f32)
+
+    for fun <- [
+          &Nx.broadcast(&1, {4, 2, 3}),
+          &Nx.reshape(&1, {3, 2}),
+          &Nx.transpose/1
+        ] do
+      expected = tensor |> Nx.backend_copy(Nx.BinaryBackend) |> fun.()
+      assert Nx.to_binary(fun.(tensor)) == Nx.to_binary(expected)
+    end
+  end
+
+  test "rfft matches the binary backend" do
+    tensor = NxEigen.tensor([1.0, 0.0, 1.0, 0.0], type: :f64)
+    expected = Nx.tensor([1.0, 0.0, 1.0, 0.0], type: :f64) |> Nx.rfft()
+
+    assert Nx.to_number(
+             Nx.all_close(Nx.backend_copy(Nx.rfft(tensor), Nx.BinaryBackend), expected)
+           ) ==
+             1
+  end
+
   test "unary ops" do
     t = NxEigen.tensor([[1.0, 2.0]], type: {:f, 32})
 

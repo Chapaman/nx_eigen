@@ -14,6 +14,7 @@ defmodule NxEigen.LinAlgTest do
     svd: 2,
     pinv: 2,
     norm: 2,
+    lu: 1,
     lu: 2,
     least_squares: 3,
     triangular_solve: 3,
