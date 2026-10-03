@@ -14,7 +14,6 @@ defmodule NxEigen.LinAlgTest do
     svd: 2,
     pinv: 2,
     norm: 2,
-    lu: 1,
     lu: 2,
     # lu/1's doctest values differ slightly under Nx 0.12's
     # block default implementation
