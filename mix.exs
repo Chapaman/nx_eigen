@@ -3,7 +3,7 @@ Code.require_file("precompiler.exs", __DIR__)
 defmodule NxEigen.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/polvalente/nx_eigen"
   @cc_template "<%= cc %>"
   @cxx_template "<%= cxx %>"

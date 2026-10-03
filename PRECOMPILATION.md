@@ -230,8 +230,8 @@ All builds use native architecture runners for maximum performance and reliabili
 To trigger a build:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 The GitHub Actions workflow will:
@@ -287,7 +287,7 @@ This creates `checksum.exs` which **must be committed** and included in the pack
 
 ```bash
 git add checksum.exs
-git commit -m "Add precompiled binary checksums for v0.1.0"
+git commit -m "Add precompiled binary checksums for v0.2.0"
 git push
 ```
 
@@ -303,7 +303,7 @@ MIX_ENV=prod mix test
 
 You should see a log message like:
 ```
-[debug] Restore NIF for current node from: /Users/.../nx_eigen-nif-2.17-aarch64-apple-darwin-0.1.0.tar.gz
+[debug] Restore NIF for current node from: /Users/.../nx_eigen-nif-2.17-aarch64-apple-darwin-0.2.0.tar.gz
 ```
 
 ## Development Mode
@@ -312,7 +312,7 @@ For local development, append `-dev` to the version or set `make_force_build: tr
 
 ```elixir
 # In mix.exs
-@version "0.1.0-dev"
+@version "0.2.0-dev"
 
 # or
 def project do
@@ -352,7 +352,7 @@ mix elixir_make.precompile
 ## Package Release Checklist
 
 1. ✅ Update version in `mix.exs`
-2. ✅ Commit and tag: `git tag v0.1.0 && git push origin v0.1.0`
+2. ✅ Commit and tag: `git tag v0.2.0 && git push origin v0.2.0`
 3. ✅ Wait for GitHub Actions to complete
 4. ✅ Generate checksum: `MIX_ENV=prod mix elixir_make.checksum --all --print` (wait for all CI jobs to finish first)
 5. ✅ Commit checksum file: `git add checksum.exs && git commit -m "Add checksums for vX.Y.Z"`

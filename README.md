@@ -264,7 +264,7 @@ Add `nx_eigen` to your list of dependencies in `mix.exs`:
 def deps do
   [
     {:nx, "~> 1.0"},
-    {:nx_eigen, "~> 0.1.0"}
+    {:nx_eigen, "~> 0.2.0"}
   ]
 end
 ```
@@ -413,7 +413,7 @@ so `mix firmware` downloads the right one for the target.
 def deps do
   [
     {:nx, "~> 1.0"},
-    {:nx_eigen, "~> 0.1.0"}
+    {:nx_eigen, "~> 0.2.0"}
   ]
 end
 ```
