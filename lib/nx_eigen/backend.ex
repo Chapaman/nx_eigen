@@ -44,13 +44,6 @@ defmodule NxEigen.Backend do
     []
   end
 
-  # LinAlg decompositions and rfft/irfft arrive as blocks. This backend has
-  # no native kernel for them, so they run as ordinary Nx calls.
-  @impl true
-  def block(struct, _output, args, fun) do
-    apply(fun, [struct | args])
-  end
-
   @impl true
   def block(block, _output, args, default_impl) do
     apply(default_impl, [block | args])
