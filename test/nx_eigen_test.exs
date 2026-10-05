@@ -167,6 +167,37 @@ defmodule NxEigenTest do
     assert Nx.to_binary(res) == Nx.to_binary(Nx.tensor([6.0, 15.0], type: {:f, 32}))
   end
 
+  test "full sum matches the binary backend" do
+    same = fn tensor, opts ->
+      reference = Nx.backend_copy(tensor, Nx.BinaryBackend)
+      got = Nx.sum(tensor, opts)
+      expected = Nx.sum(reference, opts)
+
+      case tensor.type do
+        {kind, _} when kind in [:f, :c] ->
+          assert Nx.to_number(Nx.all_close(Nx.backend_copy(got, Nx.BinaryBackend), expected)) ==
+                   1
+
+        _ ->
+          assert Nx.to_binary(got) == Nx.to_binary(expected)
+      end
+    end
+
+    for type <- [{:s, 32}, {:s, 64}, {:u, 8}, {:f, 64}, {:c, 64}] do
+      tensor = NxEigen.tensor([[1, 2, 3], [4, 5, 6]], type: type)
+      same.(tensor, [])
+      same.(tensor, axes: [0])
+      same.(tensor, axes: [])
+      same.(tensor, keep_axes: true)
+    end
+
+    row = NxEigen.tensor([Enum.to_list(1..32)], type: {:f, 64})
+    same.(row, axes: [1])
+
+    overflow = NxEigen.tensor([9_223_372_036_854_775_807, 1], type: {:s, 64})
+    same.(overflow, [])
+  end
+
   test "product reduction" do
     t = NxEigen.tensor([[2.0, 3.0], [4.0, 5.0]], type: {:f, 32})
 

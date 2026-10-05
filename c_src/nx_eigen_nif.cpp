@@ -4389,20 +4389,26 @@ fine::ResourcePtr<EigenTensor> sum_nif(ErlNifEnv *env,
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
         auto &out_arr = result->data.emplace<FlatArray<T>>();
         out_arr.resize(total_out);
-        for (size_t i = 0; i < total_out; ++i)
-          out_arr[i] = static_cast<T>(0);
-        for (size_t i = 0; i < in_arr.size(); ++i) {
-          size_t out_idx = 0;
-          for (int d = 0; d < in_rank; ++d) {
-            size_t coord = (i / input_strides[d]) % tensor->shape[d];
-            out_idx += coord * output_strides_map[d];
+        // One output value, so every element adds into it. Kept dimensions
+        // of size 1 still take this path. An empty axis list is not a reduction.
+        if (!axes.empty() && total_out == 1) {
+          out_arr[0] = in_arr.sum();
+        } else {
+          for (size_t i = 0; i < total_out; ++i)
+            out_arr[i] = static_cast<T>(0);
+          for (size_t i = 0; i < in_arr.size(); ++i) {
+            size_t out_idx = 0;
+            for (int d = 0; d < in_rank; ++d) {
+              size_t coord = (i / input_strides[d]) % tensor->shape[d];
+              out_idx += coord * output_strides_map[d];
+            }
+            if (out_idx >= total_out) {
+              throw std::runtime_error(
+                  "sum_nif: computed output index " + std::to_string(out_idx) +
+                  " out of bounds (size: " + std::to_string(total_out) + ")");
+            }
+            out_arr[out_idx] += in_arr[i];
           }
-          if (out_idx >= total_out) {
-            throw std::runtime_error(
-                "sum_nif: computed output index " + std::to_string(out_idx) +
-                " out of bounds (size: " + std::to_string(total_out) + ")");
-          }
-          out_arr[out_idx] += in_arr[i];
         }
       },
       tensor->data);
