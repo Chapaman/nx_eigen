@@ -2,6 +2,7 @@
 #include <complex>
 #include <fine.hpp>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -98,14 +99,18 @@ using FlatArray = Eigen::Array<Scalar, Eigen::Dynamic, 1>;
 
 // We wrap the Eigen matrix in a variant to support multiple types
 struct EigenTensor {
-  std::variant<FlatArray<uint8_t>, FlatArray<uint16_t>, FlatArray<uint32_t>,
-               FlatArray<uint64_t>, FlatArray<int8_t>, FlatArray<int16_t>,
-               FlatArray<int32_t>, FlatArray<int64_t>, FlatArray<float>,
-               FlatArray<double>, FlatArray<std::complex<float>>,
-               FlatArray<std::complex<double>>>
-      data;
+  using Storage =
+      std::variant<FlatArray<uint8_t>, FlatArray<uint16_t>, FlatArray<uint32_t>,
+                   FlatArray<uint64_t>, FlatArray<int8_t>, FlatArray<int16_t>,
+                   FlatArray<int32_t>, FlatArray<int64_t>, FlatArray<float>,
+                   FlatArray<double>, FlatArray<std::complex<float>>,
+                   FlatArray<std::complex<double>>>;
 
+  // Ops allocate a new array. Reshape shares this pointer and keeps its own shape.
+  std::shared_ptr<Storage> storage{std::make_shared<Storage>()};
   std::vector<int64_t> shape;
+
+  Storage &data() { return *storage; }
 };
 
 FINE_RESOURCE(EigenTensor);
@@ -144,7 +149,7 @@ fine::ResourcePtr<EigenTensor> from_binary_nif(ErlNifEnv *env,
 
   auto init_array = [&](auto scalar_ptr) {
     using Scalar = std::decay_t<decltype(*scalar_ptr)>;
-    auto &arr = tensor->data.emplace<FlatArray<Scalar>>();
+    auto &arr = tensor->data().emplace<FlatArray<Scalar>>();
     arr.resize(num_elements);
 
     if (binary.size != num_elements * sizeof(Scalar)) {
@@ -217,10 +222,10 @@ as_type_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     using NewScalar = std::decay_t<decltype(*scalar_ptr)>;
     std::visit(
         [&](auto &arr) {
-          auto &res_arr = result->data.emplace<FlatArray<NewScalar>>();
+          auto &res_arr = result->data().emplace<FlatArray<NewScalar>>();
           cast_and_assign<NewScalar>(res_arr, arr);
         },
-        tensor->data);
+        tensor->data());
   };
 
   switch (type) {
@@ -319,7 +324,7 @@ ErlNifBinary to_binary_nif(ErlNifEnv *env,
         std::memcpy(binary.data, arr.data(), byte_size);
         return binary;
       },
-      tensor->data);
+      tensor->data());
 }
 FINE_NIF(to_binary_nif, 0);
 
@@ -426,7 +431,7 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
     std::visit(                                                                \
         [&](auto &mat) {                                                       \
           using T = typename std::decay_t<decltype(mat)>;                      \
-          auto &res_mat = result->data.emplace<T>();                           \
+          auto &res_mat = result->data().emplace<T>();                           \
           if constexpr (std::is_floating_point_v<typename T::Scalar> ||        \
                         Eigen::NumTraits<typename T::Scalar>::IsComplex) {     \
             res_mat = op;                                                      \
@@ -434,7 +439,7 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
             throw std::runtime_error("Operation not supported for this type"); \
           }                                                                    \
         },                                                                     \
-        tensor->data);                                                         \
+        tensor->data());                                                         \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -447,7 +452,7 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
     std::visit(                                                                \
         [&](auto &mat) {                                                       \
           using T = typename std::decay_t<decltype(mat)>;                      \
-          auto &res_mat = result->data.emplace<T>();                           \
+          auto &res_mat = result->data().emplace<T>();                           \
           if constexpr (!Eigen::NumTraits<typename T::Scalar>::IsComplex &&    \
                         !std::is_integral_v<typename T::Scalar>) {             \
             res_mat = op;                                                      \
@@ -455,7 +460,7 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
             throw std::runtime_error("Operation not supported for this type"); \
           }                                                                    \
         },                                                                     \
-        tensor->data);                                                         \
+        tensor->data());                                                         \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -469,11 +474,11 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
     std::visit(                                                                \
         [&](auto &l_mat) {                                                     \
           using T = typename std::decay_t<decltype(l_mat)>;                    \
-          auto &r_mat = std::get<T>(right->data);                              \
-          auto &res_mat = result->data.emplace<T>();                           \
+          auto &r_mat = std::get<T>(right->data());                              \
+          auto &res_mat = result->data().emplace<T>();                           \
           res_mat = op;                                                        \
         },                                                                     \
-        left->data);                                                           \
+        left->data());                                                           \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -487,15 +492,15 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
     std::visit(                                                                \
         [&](auto &l_mat) {                                                     \
           using T = typename std::decay_t<decltype(l_mat)>;                    \
-          auto &r_mat = std::get<T>(right->data);                              \
-          auto &res_mat = result->data.emplace<T>();                           \
+          auto &r_mat = std::get<T>(right->data());                              \
+          auto &res_mat = result->data().emplace<T>();                           \
           if constexpr (!Eigen::NumTraits<typename T::Scalar>::IsComplex) {    \
             res_mat = op;                                                      \
           } else {                                                             \
             throw std::runtime_error("Operation not supported for complex");   \
           }                                                                    \
         },                                                                     \
-        left->data);                                                           \
+        left->data());                                                           \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -509,11 +514,11 @@ template <typename T> FlatArray<uint8_t> safe_le(const T &a, const T &b) {
     std::visit(                                                                \
         [&](auto &l_mat) {                                                     \
           using T = typename std::decay_t<decltype(l_mat)>;                    \
-          auto &r_mat = std::get<T>(right->data);                              \
-          auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();          \
+          auto &r_mat = std::get<T>(right->data());                              \
+          auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();          \
           res_mat = helper(l_mat, r_mat);                                      \
         },                                                                     \
-        left->data);                                                           \
+        left->data());                                                           \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -545,8 +550,8 @@ NX_EIGEN_COMPARISON_OP(less_equal_nif, safe_le);
         [&](auto &l_mat) {                                                     \
           using T = typename std::decay_t<decltype(l_mat)>;                    \
           using Scalar = typename T::Scalar;                                   \
-          auto &r_mat = std::get<T>(right->data);                              \
-          auto &res_mat = result->data.emplace<T>();                           \
+          auto &r_mat = std::get<T>(right->data());                              \
+          auto &res_mat = result->data().emplace<T>();                           \
           if constexpr (std::is_integral_v<Scalar>) {                          \
             res_mat.resize(l_mat.size());                                      \
             for (size_t i = 0; i < l_mat.size(); ++i) {                        \
@@ -557,7 +562,7 @@ NX_EIGEN_COMPARISON_OP(less_equal_nif, safe_le);
                 "Bitwise ops only support integer types");                     \
           }                                                                    \
         },                                                                     \
-        left->data);                                                           \
+        left->data());                                                           \
     return result;                                                             \
   }                                                                            \
   FINE_NIF(name, 0)
@@ -577,7 +582,7 @@ bitwise_not_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_integral_v<Scalar>) {
           res_mat.resize(mat.size());
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -587,7 +592,7 @@ bitwise_not_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           throw std::runtime_error("Bitwise not only supports integer types");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(bitwise_not_nif, 0);
@@ -604,15 +609,15 @@ logical_and_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
       [&](auto &l_mat) {
         using T = typename std::decay_t<decltype(l_mat)>;
         using Scalar = typename T::Scalar;
-        auto &r_mat = std::get<T>(right->data);
-        auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();
+        auto &r_mat = std::get<T>(right->data());
+        auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();
         auto l_bool =
             (l_mat != static_cast<Scalar>(0)).template cast<uint8_t>();
         auto r_bool =
             (r_mat != static_cast<Scalar>(0)).template cast<uint8_t>();
         res_mat = l_bool * r_bool;
       },
-      left->data);
+      left->data());
   return result;
 }
 FINE_NIF(logical_and_nif, 0);
@@ -626,8 +631,8 @@ logical_or_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
       [&](auto &l_mat) {
         using T = typename std::decay_t<decltype(l_mat)>;
         using Scalar = typename T::Scalar;
-        auto &r_mat = std::get<T>(right->data);
-        auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();
+        auto &r_mat = std::get<T>(right->data());
+        auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();
         auto l_bool =
             (l_mat != static_cast<Scalar>(0)).template cast<uint8_t>();
         auto r_bool =
@@ -635,7 +640,7 @@ logical_or_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
         // For logical OR: result is 1 if either is non-zero
         res_mat = (l_bool + r_bool).cwiseMin(static_cast<uint8_t>(1));
       },
-      left->data);
+      left->data());
   return result;
 }
 FINE_NIF(logical_or_nif, 0);
@@ -650,8 +655,8 @@ logical_xor_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
       [&](auto &l_mat) {
         using T = typename std::decay_t<decltype(l_mat)>;
         using Scalar = typename T::Scalar;
-        auto &r_mat = std::get<T>(right->data);
-        auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();
+        auto &r_mat = std::get<T>(right->data());
+        auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();
         auto l_bool = (l_mat != static_cast<Scalar>(0)).template cast<uint8_t>();
         auto r_bool = (r_mat != static_cast<Scalar>(0)).template cast<uint8_t>();
         // XOR: different bool values
@@ -660,7 +665,7 @@ logical_xor_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
           res_mat[i] = (l_bool[i] != r_bool[i]) ? 1 : 0;
         }
       },
-      left->data);
+      left->data());
   return result;
 }
 FINE_NIF(logical_xor_nif, 0);
@@ -691,15 +696,15 @@ abs_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           // For complex types, abs returns real values
           using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
           using RealArray = FlatArray<RealScalar>;
-          auto &res_mat = result->data.emplace<RealArray>();
+          auto &res_mat = result->data().emplace<RealArray>();
           res_mat = mat.abs();
         } else {
           // For real and integer types, abs returns the same type
-          auto &res_mat = result->data.emplace<T>();
+          auto &res_mat = result->data().emplace<T>();
           res_mat = mat.abs();
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(abs_nif, 0);
@@ -723,7 +728,7 @@ negate_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_unsigned_v<Scalar>) {
           // For unsigned, negate uses two's complement (wraps around)
           res_mat.resize(mat.size());
@@ -734,7 +739,7 @@ negate_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           res_mat = -mat;
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(negate_nif, 0);
@@ -748,7 +753,7 @@ cbrt_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_floating_point_v<Scalar> ||
                       Eigen::NumTraits<Scalar>::IsComplex) {
           res_mat.resize(mat.size());
@@ -759,7 +764,7 @@ cbrt_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           throw std::runtime_error("cbrt not supported for integer types");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(cbrt_nif, 0);
@@ -781,7 +786,7 @@ erf_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_floating_point_v<Scalar>) {
           res_mat.resize(mat.size());
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -791,7 +796,7 @@ erf_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           throw std::runtime_error("erf not supported for this type");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(erf_nif, 0);
@@ -804,7 +809,7 @@ erfc_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_floating_point_v<Scalar>) {
           res_mat.resize(mat.size());
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -814,7 +819,7 @@ erfc_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           throw std::runtime_error("erfc not supported for this type");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(erfc_nif, 0);
@@ -828,14 +833,14 @@ sign_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (!Eigen::NumTraits<Scalar>::IsComplex) {
           res_mat = mat.sign();
         } else {
           throw std::runtime_error("Sign not supported for complex types");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(sign_nif, 0);
@@ -852,7 +857,7 @@ conjugate_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (Eigen::NumTraits<Scalar>::IsComplex) {
           res_mat = mat.conjugate();
         } else {
@@ -860,7 +865,7 @@ conjugate_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           res_mat = mat;
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(conjugate_nif, 0);
@@ -875,15 +880,15 @@ real_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
         using Scalar = typename T::Scalar;
         if constexpr (Eigen::NumTraits<Scalar>::IsComplex) {
           using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-          auto &res_mat = result->data.emplace<FlatArray<RealScalar>>();
+          auto &res_mat = result->data().emplace<FlatArray<RealScalar>>();
           res_mat = mat.real();
         } else {
           // For real numbers, return as-is
-          auto &res_mat = result->data.emplace<T>();
+          auto &res_mat = result->data().emplace<T>();
           res_mat = mat;
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(real_nif, 0);
@@ -898,16 +903,16 @@ imag_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
         using Scalar = typename T::Scalar;
         if constexpr (Eigen::NumTraits<Scalar>::IsComplex) {
           using RealScalar = typename Eigen::NumTraits<Scalar>::Real;
-          auto &res_mat = result->data.emplace<FlatArray<RealScalar>>();
+          auto &res_mat = result->data().emplace<FlatArray<RealScalar>>();
           res_mat = mat.imag();
         } else {
           // For real numbers, imaginary part is zero
-          auto &res_mat = result->data.emplace<T>();
+          auto &res_mat = result->data().emplace<T>();
           res_mat.resize(mat.size());
           res_mat.setZero();
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(imag_nif, 0);
@@ -923,8 +928,8 @@ quotient_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
         [&](auto &l_mat) {
           using T = typename std::decay_t<decltype(l_mat)>;
           using Scalar = typename T::Scalar;
-          auto &r_mat = std::get<T>(right->data);
-          auto &res_mat = result->data.emplace<T>();
+          auto &r_mat = std::get<T>(right->data());
+          auto &res_mat = result->data().emplace<T>();
           if constexpr (std::is_integral_v<Scalar>) {
             res_mat.resize(l_mat.size());
             for (size_t i = 0; i < l_mat.size(); ++i) {
@@ -937,7 +942,7 @@ quotient_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
             throw std::runtime_error("Quotient only supports integer types");
           }
         },
-        left->data);
+        left->data());
     return result;
   } catch (const std::exception &e) {
     throw std::runtime_error(std::string("quotient_nif error: ") + e.what());
@@ -955,8 +960,8 @@ remainder_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
         [&](auto &l_mat) {
           using T = typename std::decay_t<decltype(l_mat)>;
           using Scalar = typename T::Scalar;
-          auto &r_mat = std::get<T>(right->data);
-          auto &res_mat = result->data.emplace<T>();
+          auto &r_mat = std::get<T>(right->data());
+          auto &res_mat = result->data().emplace<T>();
           if constexpr (std::is_integral_v<Scalar>) {
             res_mat.resize(l_mat.size());
             for (size_t i = 0; i < l_mat.size(); ++i) {
@@ -974,7 +979,7 @@ remainder_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
             throw std::runtime_error("Remainder not supported for complex types");
           }
         },
-        left->data);
+        left->data());
     return result;
   } catch (const std::exception &e) {
     throw std::runtime_error(std::string("remainder_nif error: ") + e.what());
@@ -991,7 +996,7 @@ is_nan_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();
+        auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();
         res_mat.resize(mat.size());
         if constexpr (std::is_floating_point_v<Scalar>) {
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -1008,7 +1013,7 @@ is_nan_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           res_mat.setZero();
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(is_nan_nif, 0);
@@ -1021,7 +1026,7 @@ is_infinity_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<FlatArray<uint8_t>>();
+        auto &res_mat = result->data().emplace<FlatArray<uint8_t>>();
         res_mat.resize(mat.size());
         if constexpr (std::is_floating_point_v<Scalar>) {
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -1038,7 +1043,7 @@ is_infinity_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
           res_mat.setZero();
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(is_infinity_nif, 0);
@@ -1053,7 +1058,7 @@ clip_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor, double min_val,
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (!Eigen::NumTraits<Scalar>::IsComplex) {
           Scalar min_s = static_cast<Scalar>(min_val);
           Scalar max_s = static_cast<Scalar>(max_val);
@@ -1063,7 +1068,7 @@ clip_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor, double min_val,
           throw std::runtime_error("Clip not supported for complex types");
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(clip_nif, 0);
@@ -1091,7 +1096,7 @@ reverse_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
   std::visit(
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(src_mat.size());
 
         for (size_t src_idx = 0; src_idx < src_mat.size(); ++src_idx) {
@@ -1127,7 +1132,7 @@ reverse_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           dst_mat[dst_idx] = src_mat[src_idx];
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -1153,7 +1158,7 @@ concatenate_nif(ErlNifEnv *env,
     std::visit(
         [&](auto &first_mat) {
           using T = typename std::decay_t<decltype(first_mat)>;
-          auto &res_mat = result->data.emplace<T>();
+          auto &res_mat = result->data().emplace<T>();
 
           size_t total_size = 1;
           for (auto dim : result->shape)
@@ -1172,7 +1177,7 @@ concatenate_nif(ErlNifEnv *env,
           // Copy each tensor
           size_t offset_along_axis = 0;
           for (const auto &tensor : tensors) {
-            auto &src_mat = std::get<T>(tensor->data);
+            auto &src_mat = std::get<T>(tensor->data());
             std::vector<size_t> src_strides(rank);
             size_t src_stride = 1;
             for (int i = rank - 1; i >= 0; --i) {
@@ -1212,7 +1217,7 @@ concatenate_nif(ErlNifEnv *env,
             offset_along_axis += tensor->shape[axis];
           }
         },
-        tensors[0]->data);
+        tensors[0]->data());
 
     return result;
   } catch (const std::exception &e) {
@@ -1238,7 +1243,7 @@ fine::ResourcePtr<EigenTensor> sort_nif(ErlNifEnv *env,
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat = src_mat; // Copy data
 
         if constexpr (!Eigen::NumTraits<Scalar>::IsComplex) {
@@ -1354,7 +1359,7 @@ fine::ResourcePtr<EigenTensor> sort_nif(ErlNifEnv *env,
           throw std::runtime_error("Sort not supported for complex types");
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -1379,7 +1384,7 @@ argsort_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     std::visit(
         [&](auto &src_mat) {
           using Scalar = typename std::decay_t<decltype(src_mat)>::Scalar;
-          auto &dst_mat = result->data.emplace<FlatArray<IndexScalar>>();
+          auto &dst_mat = result->data().emplace<FlatArray<IndexScalar>>();
           dst_mat.resize(src_mat.size());
 
           if constexpr (!Eigen::NumTraits<Scalar>::IsComplex) {
@@ -1488,7 +1493,7 @@ argsort_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
             throw std::runtime_error("Argsort not supported for complex types");
           }
         },
-        tensor->data);
+        tensor->data());
   };
 
   // Call the lambda with the appropriate output index type
@@ -1524,7 +1529,7 @@ population_count_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         res_mat.resize(mat.size());
 
         if constexpr (std::is_integral_v<Scalar> &&
@@ -1545,7 +1550,7 @@ population_count_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
               "population_count only supports integer types");
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -1560,7 +1565,7 @@ count_leading_zeros_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         res_mat.resize(mat.size());
 
         if constexpr (std::is_integral_v<Scalar> &&
@@ -1592,7 +1597,7 @@ count_leading_zeros_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
               "count_leading_zeros only supports integer types");
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -1614,12 +1619,12 @@ bitcast_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
         bytes.resize(byte_size);
         std::memcpy(bytes.data(), mat.data(), byte_size);
       },
-      tensor->data);
+      tensor->data());
 
   // Reinterpret as target type
   auto init_target = [&](auto scalar_ptr) {
     using Scalar = std::decay_t<decltype(*scalar_ptr)>;
-    auto &arr = result->data.emplace<FlatArray<Scalar>>();
+    auto &arr = result->data().emplace<FlatArray<Scalar>>();
     size_t num_elements = bytes.size() / sizeof(Scalar);
     arr.resize(num_elements);
     std::memcpy(arr.data(), bytes.data(), bytes.size());
@@ -1693,7 +1698,7 @@ stack_nif(ErlNifEnv *env, std::vector<fine::ResourcePtr<EigenTensor>> tensors,
   std::visit(
       [&](auto &first_mat) {
         using T = typename std::decay_t<decltype(first_mat)>;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
 
         size_t total_size = 1;
         for (auto dim : result->shape)
@@ -1712,7 +1717,7 @@ stack_nif(ErlNifEnv *env, std::vector<fine::ResourcePtr<EigenTensor>> tensors,
         // Copy each tensor
         for (size_t stack_idx = 0; stack_idx < tensors.size(); ++stack_idx) {
           const auto &tensor = tensors[stack_idx];
-          auto &src_mat = std::get<T>(tensor->data);
+          auto &src_mat = std::get<T>(tensor->data());
 
           int src_rank = tensor->shape.size();
 
@@ -1753,7 +1758,7 @@ stack_nif(ErlNifEnv *env, std::vector<fine::ResourcePtr<EigenTensor>> tensors,
           }
         }
       },
-      tensors[0]->data);
+      tensors[0]->data());
 
   return result;
 }
@@ -1789,7 +1794,7 @@ erf_inv_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
       [&](auto &mat) {
         using T = typename std::decay_t<decltype(mat)>;
         using Scalar = typename T::Scalar;
-        auto &res_mat = result->data.emplace<T>();
+        auto &res_mat = result->data().emplace<T>();
         if constexpr (std::is_floating_point_v<Scalar>) {
           res_mat.resize(mat.size());
           for (size_t i = 0; i < mat.size(); ++i) {
@@ -1801,7 +1806,7 @@ erf_inv_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
               "erf_inv only supports floating point types");
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -1832,7 +1837,7 @@ indexed_add_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
                 "indexed_add: indices must be integer type");
           }
         },
-        indices->data);
+        indices->data());
 
     // Infer axes from indices if not provided
     // indices shape is [..., num_axes] where last dim has coordinates
@@ -1880,10 +1885,10 @@ indexed_add_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     std::visit(
         [&](auto &src_mat) {
           using T = typename std::decay_t<decltype(src_mat)>;
-          auto &dst_mat = result->data.emplace<T>();
+          auto &dst_mat = result->data().emplace<T>();
           dst_mat = src_mat;
 
-          auto &upd_mat = std::get<T>(updates->data);
+          auto &upd_mat = std::get<T>(updates->data());
 
           // For each update position
           for (size_t i = 0; i < num_updates; ++i) {
@@ -1944,7 +1949,7 @@ indexed_add_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
             }
           }
         },
-        tensor->data);
+        tensor->data());
 
     return result;
   } catch (const std::exception &e) {
@@ -1978,7 +1983,7 @@ indexed_put_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
                 "indexed_put: indices must be integer type");
           }
         },
-        indices->data);
+        indices->data());
 
     // Infer axes from indices if not provided
     // indices shape is [..., num_axes] where last dim has coordinates
@@ -2026,10 +2031,10 @@ indexed_put_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     std::visit(
         [&](auto &src_mat) {
           using T = typename std::decay_t<decltype(src_mat)>;
-          auto &dst_mat = result->data.emplace<T>();
+          auto &dst_mat = result->data().emplace<T>();
           dst_mat = src_mat;
 
-          auto &upd_mat = std::get<T>(updates->data);
+          auto &upd_mat = std::get<T>(updates->data());
 
           // For each update position
           for (size_t i = 0; i < num_updates; ++i) {
@@ -2090,7 +2095,7 @@ indexed_put_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
             }
           }
         },
-        tensor->data);
+        tensor->data());
 
     return result;
   } catch (const std::exception &e) {
@@ -2235,7 +2240,7 @@ window_sum_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(output_size);
         dst_mat.setZero();
 
@@ -2294,7 +2299,7 @@ window_sum_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           dst_mat[out_idx] = sum;
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -2328,7 +2333,7 @@ window_product_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(output_size);
 
         for (size_t out_idx = 0; out_idx < output_size; ++out_idx) {
@@ -2381,7 +2386,7 @@ window_product_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           dst_mat[out_idx] = product;
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -2415,7 +2420,7 @@ window_max_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(output_size);
 
         for (size_t out_idx = 0; out_idx < output_size; ++out_idx) {
@@ -2493,7 +2498,7 @@ window_max_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           }
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -2527,7 +2532,7 @@ window_min_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       [&](auto &src_mat) {
         using T = typename std::decay_t<decltype(src_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(output_size);
 
         for (size_t out_idx = 0; out_idx < output_size; ++out_idx) {
@@ -2605,7 +2610,7 @@ window_min_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           }
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -2655,7 +2660,7 @@ fine::ResourcePtr<EigenTensor> window_scatter_max_nif(
       [&](auto &tensor_mat) {
         using T = typename std::decay_t<decltype(tensor_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(tensor_size);
 
         // Initialize with init_value
@@ -2761,9 +2766,9 @@ fine::ResourcePtr<EigenTensor> window_scatter_max_nif(
                 }
               }
             },
-            source->data);
+            source->data());
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -2812,7 +2817,7 @@ fine::ResourcePtr<EigenTensor> window_scatter_min_nif(
       [&](auto &tensor_mat) {
         using T = typename std::decay_t<decltype(tensor_mat)>;
         using Scalar = typename T::Scalar;
-        auto &dst_mat = result->data.emplace<T>();
+        auto &dst_mat = result->data().emplace<T>();
         dst_mat.resize(tensor_size);
 
         // Initialize with init_value
@@ -2918,9 +2923,9 @@ fine::ResourcePtr<EigenTensor> window_scatter_min_nif(
                 }
               }
             },
-            source->data);
+            source->data());
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -3050,19 +3055,19 @@ fine::ResourcePtr<EigenTensor> fft_nif(ErlNifEnv *env,
 
   // Input is guaranteed to be complex (upcasted in Elixir)
   // Get direct pointer to data - no copy needed
-  if (auto *c128_arr = std::get_if<FlatArray<std::complex<double>>>(&tensor->data)) {
+  if (auto *c128_arr = std::get_if<FlatArray<std::complex<double>>>(&tensor->data())) {
     std::vector<std::complex<double>> out_buf(out_elems);
     fft_along_axis_t<double>(c128_arr->data(), out_buf.data(), geom, fft_length,
                             FftDirection::Forward);
-    auto &res_arr = result->data.emplace<FlatArray<std::complex<double>>>();
+    auto &res_arr = result->data().emplace<FlatArray<std::complex<double>>>();
     res_arr.resize(out_elems);
     std::memcpy(res_arr.data(), out_buf.data(),
                 out_elems * sizeof(std::complex<double>));
-  } else if (auto *c64_arr = std::get_if<FlatArray<std::complex<float>>>(&tensor->data)) {
+  } else if (auto *c64_arr = std::get_if<FlatArray<std::complex<float>>>(&tensor->data())) {
     std::vector<std::complex<float>> out_buf(out_elems);
     fft_along_axis_t<float>(c64_arr->data(), out_buf.data(), geom, fft_length,
                            FftDirection::Forward);
-    auto &res_arr = result->data.emplace<FlatArray<std::complex<float>>>();
+    auto &res_arr = result->data().emplace<FlatArray<std::complex<float>>>();
     res_arr.resize(out_elems);
     std::memcpy(res_arr.data(), out_buf.data(),
                 out_elems * sizeof(std::complex<float>));
@@ -3095,7 +3100,7 @@ fine::ResourcePtr<EigenTensor> ifft_nif(ErlNifEnv *env,
 
   // Input is guaranteed to be complex (upcasted in Elixir)
   // Get direct pointer to data - no copy needed
-  if (auto *c128_arr = std::get_if<FlatArray<std::complex<double>>>(&tensor->data)) {
+  if (auto *c128_arr = std::get_if<FlatArray<std::complex<double>>>(&tensor->data())) {
     std::vector<std::complex<double>> out_buf(out_elems);
     fft_along_axis_t<double>(c128_arr->data(), out_buf.data(), geom, fft_length,
                             FftDirection::Inverse);
@@ -3103,11 +3108,11 @@ fine::ResourcePtr<EigenTensor> ifft_nif(ErlNifEnv *env,
     double inv_n = 1.0 / static_cast<double>(fft_length);
     for (size_t i = 0; i < out_elems; ++i)
       out_buf[i] *= inv_n;
-    auto &res_arr = result->data.emplace<FlatArray<std::complex<double>>>();
+    auto &res_arr = result->data().emplace<FlatArray<std::complex<double>>>();
     res_arr.resize(out_elems);
     std::memcpy(res_arr.data(), out_buf.data(),
                 out_elems * sizeof(std::complex<double>));
-  } else if (auto *c64_arr = std::get_if<FlatArray<std::complex<float>>>(&tensor->data)) {
+  } else if (auto *c64_arr = std::get_if<FlatArray<std::complex<float>>>(&tensor->data())) {
     std::vector<std::complex<float>> out_buf(out_elems);
     fft_along_axis_t<float>(c64_arr->data(), out_buf.data(), geom, fft_length,
                            FftDirection::Inverse);
@@ -3115,7 +3120,7 @@ fine::ResourcePtr<EigenTensor> ifft_nif(ErlNifEnv *env,
     float inv_n = 1.0f / static_cast<float>(fft_length);
     for (size_t i = 0; i < out_elems; ++i)
       out_buf[i] *= inv_n;
-    auto &res_arr = result->data.emplace<FlatArray<std::complex<float>>>();
+    auto &res_arr = result->data().emplace<FlatArray<std::complex<float>>>();
     res_arr.resize(out_elems);
     std::memcpy(res_arr.data(), out_buf.data(),
                 out_elems * sizeof(std::complex<float>));
@@ -3454,7 +3459,7 @@ static ERL_NIF_TERM conv_nif(ErlNifEnv *env, int argc,
           }
 
           // Transpose kernel to canonical layout if permuted
-          auto &kernel_arr = std::get<FlatArray<InputScalar>>(kernel->data);
+          auto &kernel_arr = std::get<FlatArray<InputScalar>>(kernel->data());
           FlatArray<InputScalar> canonical_kernel_arr;
           std::vector<int64_t> canonical_kernel_shape;
           if (opts.kernel_permutation.empty()) {
@@ -3644,7 +3649,7 @@ static ERL_NIF_TERM conv_nif(ErlNifEnv *env, int argc,
           }
 
           // Transpose output back to desired layout if needed
-          auto &out_arr = result->data.emplace<FlatArray<OutputScalar>>();
+          auto &out_arr = result->data().emplace<FlatArray<OutputScalar>>();
           if (opts.output_permutation.empty()) {
             out_arr = std::move(canonical_out_arr);
           } else {
@@ -3656,7 +3661,7 @@ static ERL_NIF_TERM conv_nif(ErlNifEnv *env, int argc,
             out_arr = std::move(transposed_arr);
           }
         },
-        tensor->data);
+        tensor->data());
 
     return fine::Encoder<fine::ResourcePtr<EigenTensor>>::encode(env, result);
   } catch (const std::exception &e) {
@@ -3717,7 +3722,7 @@ constant_nif(ErlNifEnv *env, ScalarType type, std::vector<int64_t> shape,
 
   auto init = [&](auto scalar_ptr) {
     using Scalar = std::decay_t<decltype(*scalar_ptr)>;
-    auto &arr = tensor->data.emplace<FlatArray<Scalar>>();
+    auto &arr = tensor->data().emplace<FlatArray<Scalar>>();
     arr.resize(num_elements);
 
     // Get value from scalar tensor
@@ -3765,7 +3770,7 @@ constant_nif(ErlNifEnv *env, ScalarType type, std::vector<int64_t> shape,
 
           arr.setConstant(val);
         },
-        value_tensor->data);
+        value_tensor->data());
   };
 
   switch (type) {
@@ -3861,7 +3866,7 @@ fine::ResourcePtr<EigenTensor> eye_nif(ErlNifEnv *env, ScalarType type,
 
   auto init = [&](auto scalar_ptr) {
     using Scalar = std::decay_t<decltype(*scalar_ptr)>;
-    auto &arr = tensor->data.emplace<FlatArray<Scalar>>();
+    auto &arr = tensor->data().emplace<FlatArray<Scalar>>();
     arr.resize(total_elements);
 
     // Create identity matrix template
@@ -3956,7 +3961,7 @@ fine::ResourcePtr<EigenTensor> iota_nif(ErlNifEnv *env, ScalarType type,
 
   auto init = [&](auto scalar_ptr) {
     using Scalar = std::decay_t<decltype(*scalar_ptr)>;
-    auto &arr = tensor->data.emplace<FlatArray<Scalar>>();
+    auto &arr = tensor->data().emplace<FlatArray<Scalar>>();
     arr.resize(num_elements);
 
     if (axis == -1) {
@@ -4025,9 +4030,6 @@ fine::ResourcePtr<EigenTensor>
 reshape_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
             std::vector<int64_t> new_shape) {
   auto result = fine::make_resource<EigenTensor>();
-  // Data is shared/copied? Nx backends usually implement immutable semantics.
-  // We should copy data. But for reshape, maybe we can optimize?
-  // Nx expects a new tensor.
 
   // Validate shape dimensions
   for (auto dim : new_shape) {
@@ -4050,8 +4052,9 @@ reshape_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     throw std::runtime_error("Reshape size mismatch");
   }
 
+  // Callers only read this array, so the new tensor shares it.
+  result->storage = tensor->storage;
   result->shape = new_shape;
-  result->data = tensor->data; // Copy variant (flat array copy)
   return result;
 }
 FINE_NIF(reshape_nif, 0);
@@ -4097,7 +4100,7 @@ transpose_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(num_elements);
 
         // For each element in output (linear index i)
@@ -4134,7 +4137,7 @@ transpose_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           out_arr[i] = in_arr[input_idx];
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -4198,7 +4201,7 @@ broadcast_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(total_elements);
 
         for (size_t i = 0; i < total_elements; ++i) {
@@ -4234,7 +4237,7 @@ broadcast_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           out_arr[i] = in_arr[input_idx];
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -4282,7 +4285,7 @@ pad_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(total_out);
 
         // Handle complex vs real pad values
@@ -4336,7 +4339,7 @@ pad_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           out_arr[out_idx] = in_arr[i];
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -4387,7 +4390,7 @@ fine::ResourcePtr<EigenTensor> sum_nif(ErlNifEnv *env,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(total_out);
         for (size_t i = 0; i < total_out; ++i)
           out_arr[i] = static_cast<T>(0);
@@ -4405,7 +4408,7 @@ fine::ResourcePtr<EigenTensor> sum_nif(ErlNifEnv *env,
           out_arr[out_idx] += in_arr[i];
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(sum_nif, 0);
@@ -4417,7 +4420,7 @@ product_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(total_out);
         for (size_t i = 0; i < total_out; ++i)
           out_arr[i] = static_cast<T>(1);
@@ -4436,7 +4439,7 @@ product_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           out_arr[out_idx] *= in_arr[i];
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(product_nif, 0);
@@ -4452,7 +4455,7 @@ reduce_max_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           throw std::runtime_error(
               "Max reduction not supported for complex types");
         } else {
-          auto &out_arr = result->data.emplace<FlatArray<T>>();
+          auto &out_arr = result->data().emplace<FlatArray<T>>();
           out_arr.resize(total_out);
           for (size_t i = 0; i < total_out; ++i)
             out_arr[i] = std::numeric_limits<T>::lowest();
@@ -4473,7 +4476,7 @@ reduce_max_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           }
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(reduce_max_nif, 0);
@@ -4489,7 +4492,7 @@ reduce_min_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           throw std::runtime_error(
               "Min reduction not supported for complex types");
         } else {
-          auto &out_arr = result->data.emplace<FlatArray<T>>();
+          auto &out_arr = result->data().emplace<FlatArray<T>>();
           out_arr.resize(total_out);
           for (size_t i = 0; i < total_out; ++i)
             out_arr[i] = std::numeric_limits<T>::max();
@@ -4510,7 +4513,7 @@ reduce_min_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           }
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(reduce_min_nif, 0);
@@ -4523,7 +4526,7 @@ fine::ResourcePtr<EigenTensor> all_nif(ErlNifEnv *env,
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
         // All/any always return u8
-        auto &out_arr = result->data.emplace<FlatArray<uint8_t>>();
+        auto &out_arr = result->data().emplace<FlatArray<uint8_t>>();
         out_arr.resize(total_out);
         for (size_t i = 0; i < total_out; ++i)
           out_arr[i] = 1;
@@ -4544,7 +4547,7 @@ fine::ResourcePtr<EigenTensor> all_nif(ErlNifEnv *env,
           }
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(all_nif, 0);
@@ -4557,7 +4560,7 @@ fine::ResourcePtr<EigenTensor> any_nif(ErlNifEnv *env,
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
         // All/any always return u8
-        auto &out_arr = result->data.emplace<FlatArray<uint8_t>>();
+        auto &out_arr = result->data().emplace<FlatArray<uint8_t>>();
         out_arr.resize(total_out);
         for (size_t i = 0; i < total_out; ++i)
           out_arr[i] = 0;
@@ -4578,7 +4581,7 @@ fine::ResourcePtr<EigenTensor> any_nif(ErlNifEnv *env,
           }
         }
       },
-      tensor->data);
+      tensor->data());
   return result;
 }
 FINE_NIF(any_nif, 0);
@@ -4672,13 +4675,13 @@ arg_reduce_impl(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
 
   // For argmax, output is indices, so usually S64 or U64.
   // Nx default is S64.
-  auto &out_arr = result->data.emplace<FlatArray<int64_t>>();
+  auto &out_arr = result->data().emplace<FlatArray<int64_t>>();
   out_arr.resize(total_out);
   // Initialize all indices to 0
   std::fill(out_arr.begin(), out_arr.end(), 0);
 
   // We also need a "values" array to track current max value for comparison
-  // We can't store it in result->data because result is int64.
+  // We can't store it in result->data() because result is int64.
   // We need a temp buffer of type T.
 
   std::visit(
@@ -4747,7 +4750,7 @@ arg_reduce_impl(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
           }
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -4805,7 +4808,7 @@ fine::ResourcePtr<EigenTensor> slice_nif(ErlNifEnv *env,
   std::visit(
       [&](auto &in_arr) {
         using T = typename std::decay_t<decltype(in_arr)>::Scalar;
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
         out_arr.resize(total_out);
 
         // Iterate through output elements
@@ -4842,7 +4845,7 @@ fine::ResourcePtr<EigenTensor> slice_nif(ErlNifEnv *env,
           out_arr[out_idx] = in_arr[in_idx];
         }
       },
-      tensor->data);
+      tensor->data());
 
   return result;
 }
@@ -4879,14 +4882,14 @@ put_slice_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
     std::visit(
         [&](auto &tensor_arr) {
           using T = typename std::decay_t<decltype(tensor_arr)>::Scalar;
-          auto &out_arr = result->data.emplace<FlatArray<T>>();
+          auto &out_arr = result->data().emplace<FlatArray<T>>();
           out_arr.resize(total_size);
 
           // Copy original tensor
           out_arr = tensor_arr;
 
           // Get slice data (must be same type)
-          auto &slice_arr = std::get<FlatArray<T>>(slice->data);
+          auto &slice_arr = std::get<FlatArray<T>>(slice->data());
 
           // Overwrite the slice region
           for (size_t slice_idx = 0; slice_idx < slice_size; ++slice_idx) {
@@ -4923,7 +4926,7 @@ put_slice_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
             out_arr[tensor_idx] = slice_arr[slice_idx];
           }
         },
-        tensor->data);
+        tensor->data());
 
     return result;
   } catch (const std::exception &e) {
@@ -4957,10 +4960,10 @@ select_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> pred,
             pred_vec[i] = (pred_arr[i] != static_cast<Scalar>(0)) ? 1 : 0;
           }
         },
-        pred->data);
+        pred->data());
 
     // Verify that on_true and on_false have the same variant type
-    if (on_true->data.index() != on_false->data.index()) {
+    if (on_true->data().index() != on_false->data().index()) {
       throw std::runtime_error(
           "select_nif: on_true and on_false must have the same type");
     }
@@ -4968,15 +4971,15 @@ select_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> pred,
     std::visit(
         [&](auto &true_arr) {
           using T = typename std::decay_t<decltype(true_arr)>::Scalar;
-          auto &out_arr = result->data.emplace<FlatArray<T>>();
+          auto &out_arr = result->data().emplace<FlatArray<T>>();
           out_arr.resize(total_size);
 
           // Safe get with type checking
-          if (!std::holds_alternative<FlatArray<T>>(on_false->data)) {
+          if (!std::holds_alternative<FlatArray<T>>(on_false->data())) {
             throw std::runtime_error(
                 "select_nif: type mismatch between on_true and on_false");
           }
-          auto &false_arr = std::get<FlatArray<T>>(on_false->data);
+          auto &false_arr = std::get<FlatArray<T>>(on_false->data());
 
           // All inputs should have same size after backend broadcasting
           if (pred_vec.size() != total_size || true_arr.size() != total_size ||
@@ -4995,7 +4998,7 @@ select_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> pred,
             out_arr[i] = (pred_vec[i] != 0) ? true_arr[i] : false_arr[i];
           }
         },
-        on_true->data);
+        on_true->data());
 
     return result;
   } catch (const std::exception &e) {
@@ -5032,7 +5035,7 @@ gather_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
                 "gather_nif: indices must be integer type");
           }
         },
-        indices->data);
+        indices->data());
 
     // Check if this is multi-dimensional gather (last dim of indices = num
     // axes) or single-axis gather
@@ -5062,7 +5065,7 @@ gather_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       std::visit(
           [&](auto &tensor_arr) {
             using T = typename std::decay_t<decltype(tensor_arr)>::Scalar;
-            auto &out_arr = result->data.emplace<FlatArray<T>>();
+            auto &out_arr = result->data().emplace<FlatArray<T>>();
             out_arr.resize(num_gathers);
 
             for (size_t i = 0; i < num_gathers; ++i) {
@@ -5096,7 +5099,7 @@ gather_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
               out_arr[i] = tensor_arr[in_linear];
             }
           },
-          tensor->data);
+          tensor->data());
 
     } else {
       // General gather: indices shape is [..., num_gather_axes]
@@ -5168,7 +5171,7 @@ gather_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
       std::visit(
           [&](auto &tensor_arr) {
             using T = typename std::decay_t<decltype(tensor_arr)>::Scalar;
-            auto &out_arr = result->data.emplace<FlatArray<T>>();
+            auto &out_arr = result->data().emplace<FlatArray<T>>();
             out_arr.resize(total_out);
 
             // Iterate through all output elements
@@ -5238,7 +5241,7 @@ gather_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor,
               }
             }
           },
-          tensor->data);
+          tensor->data());
     }
 
     return result;
@@ -5275,8 +5278,8 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
       std::visit(
           [&](auto &left_arr) {
             using T = typename std::decay_t<decltype(left_arr)>::Scalar;
-            auto &right_arr = std::get<FlatArray<T>>(right->data);
-            auto &out_arr = result->data.emplace<FlatArray<T>>();
+            auto &right_arr = std::get<FlatArray<T>>(right->data());
+            auto &out_arr = result->data().emplace<FlatArray<T>>();
             out_arr.resize(1);
 
             // Use Eigen's dot product
@@ -5287,7 +5290,7 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
 
             out_arr[0] = left_vec.dot(right_vec);
           },
-          left->data);
+          left->data());
     } catch (const std::bad_variant_access &e) {
       throw std::runtime_error(
           "Type mismatch in dot product - tensors must have the same type");
@@ -5311,8 +5314,8 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
     std::visit(
         [&](auto &left_arr) {
           using T = typename std::decay_t<decltype(left_arr)>::Scalar;
-          auto &right_arr = std::get<FlatArray<T>>(right->data);
-          auto &out_arr = result->data.emplace<FlatArray<T>>();
+          auto &right_arr = std::get<FlatArray<T>>(right->data());
+          auto &out_arr = result->data().emplace<FlatArray<T>>();
           out_arr.resize(M * N);
 
           // Map flat arrays to Eigen matrices and use optimized multiplication
@@ -5328,7 +5331,7 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
 
           out_mat.noalias() = left_mat * right_mat;
         },
-        left->data);
+        left->data());
 
     return result;
   }
@@ -5430,8 +5433,8 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
   std::visit(
       [&](auto &left_arr) {
         using T = typename std::decay_t<decltype(left_arr)>::Scalar;
-        auto &right_arr = std::get<FlatArray<T>>(right->data);
-        auto &out_arr = result->data.emplace<FlatArray<T>>();
+        auto &right_arr = std::get<FlatArray<T>>(right->data());
+        auto &out_arr = result->data().emplace<FlatArray<T>>();
 
         size_t total_out = batch_size * left_free_size * right_free_size;
         out_arr.resize(total_out);
@@ -5544,7 +5547,7 @@ dot_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> left,
           out_mat.noalias() = left_mat * right_mat;
         }
       },
-      left->data);
+      left->data());
 
   return result;
 }
@@ -5585,9 +5588,9 @@ triangular_solve_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> a,
       std::visit(
           [&](auto &b_arr) {
             using T = typename std::decay_t<decltype(b_arr)>::Scalar;
-            result->data.emplace<FlatArray<T>>();
+            result->data().emplace<FlatArray<T>>();
           },
-          b->data);
+          b->data());
       return result;
     }
 
@@ -5606,7 +5609,7 @@ triangular_solve_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> a,
 
                 // Ensure both matrices have the same scalar type
                 if constexpr (std::is_same_v<T, BT>) {
-                  auto &res_arr = result->data.emplace<FlatArray<T>>();
+                  auto &res_arr = result->data().emplace<FlatArray<T>>();
                   res_arr.resize(b_total_size);
 
                   using Matrix = Eigen::Matrix<T, Eigen::Dynamic,
@@ -5708,9 +5711,9 @@ triangular_solve_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> a,
                       "triangular_solve: type mismatch between A and B");
                 }
               },
-              b->data);
+              b->data());
         },
-        a->data);
+        a->data());
 
     return result;
   } catch (const std::exception &e) {

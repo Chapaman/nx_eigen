@@ -50,6 +50,35 @@ defmodule NxEigenTest do
     end
   end
 
+  test "put_slice on a reshape leaves the original tensor unchanged" do
+    original = NxEigen.tensor([[1, 2, 3], [4, 5, 6]], type: :s32)
+    reshaped = Nx.reshape(original, {3, 2})
+
+    updated = Nx.put_slice(reshaped, [0, 0], Nx.tensor([[9, 9]], type: :s32))
+
+    assert Nx.to_binary(original) ==
+             Nx.to_binary(Nx.tensor([[1, 2, 3], [4, 5, 6]], type: :s32))
+
+    assert Nx.to_binary(reshaped) ==
+             Nx.to_binary(Nx.tensor([[1, 2], [3, 4], [5, 6]], type: :s32))
+
+    assert Nx.to_binary(updated) ==
+             Nx.to_binary(Nx.tensor([[9, 9], [3, 4], [5, 6]], type: :s32))
+  end
+
+  test "reshaped tensor keeps its data after the original is collected" do
+    reshaped =
+      (fn ->
+         original = NxEigen.tensor([[1, 2, 3], [4, 5, 6]], type: :s32)
+         Nx.reshape(original, {3, 2})
+       end).()
+
+    :erlang.garbage_collect()
+
+    assert Nx.to_binary(reshaped) ==
+             Nx.to_binary(Nx.tensor([[1, 2], [3, 4], [5, 6]], type: :s32))
+  end
+
   test "rfft matches the binary backend" do
     tensor = NxEigen.tensor([1.0, 0.0, 1.0, 0.0], type: :f64)
     expected = Nx.tensor([1.0, 0.0, 1.0, 0.0], type: :f64) |> Nx.rfft()
