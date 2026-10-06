@@ -5730,6 +5730,36 @@ triangular_solve_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> a,
 }
 FINE_NIF(triangular_solve_nif, 0);
 
+template <typename T>
+bool matrix_is_positive_hermitian(const T *data, int64_t n) {
+  for (int64_t i = 0; i < n; ++i) {
+    const T diag = data[i * n + i];
+
+    if constexpr (std::is_floating_point_v<T>) {
+      if (!(diag > static_cast<T>(0))) {
+        return false;
+      }
+    } else if (!(diag.real() > 0) || diag.imag() != 0) {
+      return false;
+    }
+
+    for (int64_t j = 0; j < i; ++j) {
+      const T lower = data[i * n + j];
+      const T upper = data[j * n + i];
+
+      if constexpr (std::is_floating_point_v<T>) {
+        if (lower != upper) {
+          return false;
+        }
+      } else if (lower != std::conj(upper)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 // LLT factors a Hermitian positive-definite matrix. A failed factorization
 // returns :error and the caller keeps the generic implementation.
 std::variant<fine::Ok<fine::ResourcePtr<EigenTensor>>, fine::Error<>>
@@ -5799,3 +5829,44 @@ cholesky_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
   return fine::Ok(result);
 }
 FINE_NIF(cholesky_nif, 0);
+
+// A failed LLT walks the matrix. Callers skip it when this is false.
+bool positive_hermitian_nif(ErlNifEnv *env, fine::ResourcePtr<EigenTensor> tensor) {
+  const auto rank = tensor->shape.size();
+  if (rank < 2) {
+    return false;
+  }
+
+  const int64_t n = tensor->shape[rank - 1];
+  if (n <= 0 || tensor->shape[rank - 2] != n) {
+    return false;
+  }
+
+  int64_t total = 1;
+  for (auto dim : tensor->shape) {
+    total *= dim;
+  }
+
+  const int64_t matrix_size = n * n;
+  const int64_t batches = total / matrix_size;
+  bool ok = true;
+
+  std::visit(
+      [&](auto &in_arr) {
+        using T = typename std::decay_t<decltype(in_arr)>::Scalar;
+        constexpr bool supported = std::is_floating_point_v<T> ||
+                                   std::is_same_v<T, std::complex<float>> ||
+                                   std::is_same_v<T, std::complex<double>>;
+        if constexpr (supported) {
+          for (int64_t batch = 0; batch < batches && ok; ++batch) {
+            ok = matrix_is_positive_hermitian<T>(in_arr.data() + batch * matrix_size, n);
+          }
+        } else {
+          ok = false;
+        }
+      },
+      tensor->data());
+
+  return ok;
+}
+FINE_NIF(positive_hermitian_nif, 0);

@@ -113,6 +113,9 @@ defmodule NxEigen.NIF do
   def cholesky(tensor), do: cholesky_nif(tensor)
   defp cholesky_nif(_tensor), do: :erlang.nif_error(:nif_not_loaded)
 
+  def positive_hermitian?(tensor), do: positive_hermitian_nif(tensor)
+  defp positive_hermitian_nif(_tensor), do: :erlang.nif_error(:nif_not_loaded)
+
   # Binary ops
   @binary_ops [
     :add,
